@@ -1,13 +1,19 @@
 {
-  "name": "twilio-openai-callbot",
+  "name": "scammeebot-twilio",
   "version": "1.0.0",
   "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
+    "fastify": "^4.25.0",
     "@fastify/websocket": "^8.0.0",
-    "@openai/realtime-api-beta": "github:openai/openai-realtime-api-beta#main",
-    "@supabase/supabase-js": "^2.86.0",
-    "dotenv": "^16.3.1",
-    "fastify": "^4.22.2",
-    "twilio": "^4.19.0"
+    "openai-realtime-api": "latest",
+    "twilio": "latest",
+    "axios": "latest"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
