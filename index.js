@@ -12,6 +12,7 @@ app.get("/", async (req, reply) => {
 // GET /voice — for browser testing
 app.get("/voice", async (req, reply) => {
   reply.type("text/xml").send(`
+    <?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Say>GET route working. Your server is alive.</Say>
     </Response>
