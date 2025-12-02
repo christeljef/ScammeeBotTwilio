@@ -36,3 +36,10 @@ const port = process.env.PORT || 3000;
 app.listen({ port, host: "0.0.0.0" }, () => {
   console.log("Server running on port", port);
 });
+
+// Keep the Render service awake by pinging itself every 4 minutes
+setInterval(() => {
+  fetch("https://scammeebottwilio.onrender.com/")
+    .then(() => console.log("Keep-alive ping sent"))
+    .catch(() => console.log("Keep-alive ping failed"));
+}, 4 * 60 * 1000);
