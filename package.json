@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "fastify": "^4.20.0",
+    "@fastify/formbody": "^7.0.0",
     "twilio": "^4.19.0"
   }
 }
