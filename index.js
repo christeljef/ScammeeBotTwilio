@@ -94,7 +94,7 @@ If the caller is pressuring:
 
 // ElevenLabs voice (Malaysian/SEA female)
 async function elevenlabsTTS(text) {
-  const voiceId = "IKne3meq5aSn9XLyUdCD"; // SEA female voice
+  const voiceId = "ykMqqjWs4pQdCIvGPn0z"; // SEA female voice
 
   const resp = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
