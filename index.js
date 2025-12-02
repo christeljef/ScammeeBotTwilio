@@ -124,7 +124,7 @@ Keep replies:
 // ===================================================
 
 async function elevenlabsTTS(text) {
-  const voiceId = "lahvoice
+  const voiceId = "ykMqqjWs4pQdCIvGPn0z"
 
   const resp = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
