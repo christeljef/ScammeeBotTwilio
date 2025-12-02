@@ -9,8 +9,5 @@
   "dependencies": {
     "fastify": "^4.20.0",
     "twilio": "^4.19.0"
-  },
-  "engines": {
-    "node": "18.x"
   }
 }
