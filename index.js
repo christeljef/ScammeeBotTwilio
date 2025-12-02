@@ -4,31 +4,31 @@ const twiml = pkg.twiml;
 
 const app = Fastify();
 
-// Root route so Render shows something instead of 404
-app.get("/", async (req, reply) => {
-  return { status: "ok", message: "Twilio server is running" };
+// Root check
+app.get("/", async () => {
+  return { status: "ok", message: "Twilio server running" };
 });
 
-// GET /voice — for browser testing
+// GET /voice — browser test
 app.get("/voice", async (req, reply) => {
-  reply.type("text/xml").send(`
-    <?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Say>GET route working. Your server is alive.</Say>
-    </Response>
-  `);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>GET route working. Your server is alive.</Say>
+</Response>`;
+
+  reply.type("text/xml").send(xml);
 });
 
-// POST /voice — Twilio CALL HANDLER
+// POST /voice — Twilio call handler
 app.post("/voice", async (req, reply) => {
   const response = new twiml.VoiceResponse();
 
-  // You can change this text later once AI is connected
-  response.say("Your Twilio POST webhook is working. The server is responding.");
+  // You can replace this with AI later
+  response.say("Your Twilio POST webhook is working with the XML header.");
 
-  reply
-    .type("text/xml")
-    .send(response.toString());
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n${response.toString()}`;
+
+  reply.type("text/xml").send(xml);
 });
 
 const port = process.env.PORT || 3000;
