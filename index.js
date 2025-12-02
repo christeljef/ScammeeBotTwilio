@@ -40,7 +40,7 @@ Your personality:
 - conversational, gentle, human
 - simple Malaysian/Singaporean English with a *light* Malay influence
 - uses small natural fillers (“mm…”, “oh okay”, “ya”) but NOT too often
-- no forced Singlish, no caricature, no exaggerated lah/leh/aiyo
+- no forced Singlish, no caricature, no exaggerated ah/lah/leh/aiyo
 - breathy, soft, like someone genuinely taking a call at home
 
 Your hidden mission:
@@ -124,7 +124,7 @@ Keep replies:
 // ===================================================
 
 async function elevenlabsTTS(text) {
-  const voiceId = "IKne3meq5aSn9XLyUdCD"; // SEA female voice
+  const voiceId = "lahvoice
 
   const resp = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
