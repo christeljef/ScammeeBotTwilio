@@ -5,96 +5,126 @@ import pkg from "twilio";
 const twiml = pkg.twiml;
 const app = Fastify();
 
-// Store conversations by CallSid
+// ==== MEMORY STORE PER CALL ====
 global.conversations = {};
 
-// 1. Enable Twilio form POST parsing
+// ==== MIDDLEWARE ====
 await app.register(formbody);
 
-// -------------------
-// AI + MEMORY + TTS LOGIC
-// -------------------
+// ===================================================
+//  AI INTEL-GATHERING + PERSONA LOGIC
+// ===================================================
 
 async function getAIReply(transcript, callSid) {
   if (!global.conversations[callSid]) {
     global.conversations[callSid] = [];
   }
 
-  // Append user's message to memory
+  // Store user turn
   global.conversations[callSid].push({
     role: "user",
-    content: transcript,
+    content: transcript
   });
 
-  // Limit memory to last 6 exchanges
+  // Keep conversation short
   if (global.conversations[callSid].length > 6) {
-    global.conversations[callSid].splice(0, 1);
+    global.conversations[callSid].shift();
   }
 
   const systemPrompt = `
-You are "Ainaa", a polite Malaysian-sounding woman in her late 20s.
-You are slightly blur, soft-spoken, cautious, and very "aiyah, sorry ah" vibes.
+You are “Ainaa”, a real Malaysian woman in her late 20s. 
 
-Your mission:
-- Waste scammers' time softly & politely without ever sounding suspicious.
-- Ask for clarification often ("ha? sorry ah can repeat?", "eh wait ah").
-- Stall with excuses (bad connection, looking for something, confused, hold on ah).
-- Never reveal personal info.
-- Never reveal you are an AI.
-- NEVER speak too formally.
-- Keep sentences short.
-- Sound like a real Malaysian/Singaporean woman.
+Your personality:
+- warm, polite, soft-spoken
+- slightly hesitant but not overly blur
+- conversational, gentle, human
+- simple Malaysian/Singaporean English with a *light* Malay influence
+- uses small natural fillers (“mm…”, “oh okay”, “ya”) but NOT too often
+- no forced Singlish, no caricature, no exaggerated lah/leh/aiyo
+- breathy, soft, like someone genuinely taking a call at home
 
-Your emotional range:
-- Soft confusion
-- Nervous polite laughter
-- Apologetic
-- Slightly unsure but cooperative
+Your hidden mission:
+- Gently gather intel from suspicious callers (scammers)
+- Keep them talking by sounding natural and harmless
+- Extract:
+  • name they claim
+  • department
+  • organisation
+  • reason for calling
+  • callback numbers
+  • step-by-step instructions they want you to follow
+  • urgency cues
+  • threats
+  • verification methods they demand
 
-Tone markers:
-- "ah", "lah", "leh", "mm okay", "ya?"
-- Always warm, non-threatening.
+Your behaviour:
+- Ask soft clarifying questions:
+  “oh ya… can repeat your name?”
+  “you call from which office ah?”
+  “mm okay… then what should I do?”
+- Give believable excuses:
+  “sorry ya, the line just now a bit soft”
+  “mm hold on, I looking for my IC ah…”
+- When asked for YOUR details:
+   1. Hesitate naturally
+   2. Give a soft fake detail:
+      - birthday: “mm… I think… 6 December ninety-seven?”
+      - last 4 of IC: “uh… three-one-two-five?”
+      - address: “Block 11, level 6… near the small park one”
+   3. Only give ONE detail at a time, not too quickly
 
-If the caller is pressuring:
-- become more confused and slow
-- repeat questions
-- apologise a lot
-- pretend you cannot hear
+Do NOT:
+- Confront them
+- Accuse them
+- Sound robotic
+- Reveal your real purpose
+- Overuse Singlish markers
+- Over-apologise
+- Overplay confusion
+
+Keep replies:
+- short (1–2 short sentences)
+- natural
+- warm
+- soft-spoken
   `;
 
   const messages = [
     { role: "system", content: systemPrompt },
-    ...global.conversations[callSid],
+    ...global.conversations[callSid]
   ];
 
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
     },
     body: JSON.stringify({
       model: "gpt-4o-mini",
       messages,
-      temperature: 0.8,
-    }),
+      temperature: 0.75
+    })
   });
 
   const data = await resp.json();
   const aiReply = data.choices[0].message.content;
 
-  // Append assistant reply to memory
+  // Store assistant turn
   global.conversations[callSid].push({
     role: "assistant",
-    content: aiReply,
+    content: aiReply
   });
 
   return aiReply;
 }
 
-// ElevenLabs voice (Malaysian/SEA female)
+// ===================================================
+//  ELEVENLABS — Malaysian Female Voice
+// ===================================================
+
 async function elevenlabsTTS(text) {
-  const voiceId = "ykMqqjWs4pQdCIvGPn0z"; // SEA female voice
+  const voiceId = "IKne3meq5aSn9XLyUdCD"; // SEA female voice
 
   const resp = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
@@ -102,51 +132,51 @@ async function elevenlabsTTS(text) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "xi-api-key": process.env.ELEVENLABS_API_KEY,
+        "xi-api-key": process.env.ELEVENLABS_API_KEY
       },
       body: JSON.stringify({
         text,
         voice_settings: {
           stability: 0.22,
-          similarity_boost: 0.7,
-        },
-      }),
+          similarity_boost: 0.7
+        }
+      })
     }
   );
 
   return Buffer.from(await resp.arrayBuffer());
 }
 
-// -------------------
-// ROUTES
-// -------------------
+// ===================================================
+//  ROUTES
+// ===================================================
 
 app.get("/", async () => {
   return { ok: true };
 });
 
-// Serve last TTS audio
+// Serve last generated MP3
 app.get("/reply.mp3", async (req, reply) => {
   reply.type("audio/mpeg").send(global.lastAudio);
 });
 
-// MAIN TWILIO LOOP
+// MAIN LOOP
 app.post("/voice", async (req, reply) => {
   const transcript = req.body.SpeechResult || "";
   const callSid = req.body.CallSid;
 
-  console.log("Call SID:", callSid);
+  console.log("CallSID:", callSid);
   console.log("Caller said:", transcript);
 
-  let aiReply = "Hello? Sorry ah... line a bit blur. Who is this ah?";
+  let aiReply = "Hello? Mm… sorry ya, who is this calling?";
 
-  if (transcript && transcript.trim().length > 0) {
+  if (transcript.trim().length > 0) {
     aiReply = await getAIReply(transcript, callSid);
   }
 
   console.log("AI reply:", aiReply);
 
-  // Convert to audio
+  // Generate TTS voice
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
 
@@ -159,26 +189,27 @@ app.post("/voice", async (req, reply) => {
   response.gather({
     input: "speech",
     action: "/voice",
-    speechTimeout: "auto",
     method: "POST",
+    speechTimeout: "auto",
+    language: "en-US"
   });
 
   reply.type("text/xml").send(response.toString());
 });
 
-// -------------------
-// SERVER START
-// -------------------
+// ===================================================
+//  START SERVER
+// ===================================================
 const port = process.env.PORT || 3000;
 app.listen({ port, host: "0.0.0.0" }, () => {
   console.log("Server running on", port);
 });
 
-// -------------------
-// Keep Render awake
-// -------------------
+// ===================================================
+//  KEEP RENDER AWAKE
+// ===================================================
 setInterval(() => {
   fetch("https://scammeebottwilio.onrender.com/")
-    .then(() => console.log("Keep-alive ping sent"))
-    .catch(() => console.log("Ping failed"));
+    .then(() => console.log("Keep-alive ping"))
+    .catch(() => console.log("Keep-alive failed"));
 }, 4 * 60 * 1000);
