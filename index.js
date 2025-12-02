@@ -4,14 +4,17 @@ const twiml = pkg.twiml;
 
 const app = Fastify();
 
-app.get("/", async () => {
-  return { status: "ok" };
+app.get("/voice", async (req, reply) => {
+  reply.type("text/xml").send(`
+    <Response>
+      <Say>Hello, your server GET route is working.</Say>
+    </Response>
+  `);
 });
 
 app.post("/voice", async (req, reply) => {
   const response = new twiml.VoiceResponse();
-
-  response.say("Hello, your Render + Twilio server is working.");
+  response.say("Hello, your server POST route is working.");
 
   reply.type("text/xml").send(response.toString());
 });
