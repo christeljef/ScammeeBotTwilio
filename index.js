@@ -5,43 +5,42 @@ import pkg from "twilio";
 const twiml = pkg.twiml;
 const app = Fastify();
 
-// --- 1. Register form parser BEFORE routes (critical!) ---
+// -------- 1. Parse Twilio's form-encoded POST --------
 await app.register(formbody);
 
-// --- 2. Health check ---
+// -------- 2. Health check route --------
 app.get("/", async () => {
-  return { ok: true, message: "Server running" };
+  return { ok: true, running: true };
 });
 
-// --- 3. GET /voice test route ---
+// -------- 3. GET /voice (for testing in browser) --------
+// Twilio XML must have NO BOM, NO whitespace, NO extra header
+// So we let Twilio library generate the XML automatically
 app.get("/voice", async (req, reply) => {
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>GET route working.</Say>
-</Response>`;
-  reply.type("text/xml").send(xml);
+  const response = new twiml.VoiceResponse();
+  response.say("GET route working.");
+  reply.type("text/xml").send(response.toString());
 });
 
-// --- 4. POST /voice Twilio webhook ---
+// -------- 4. POST /voice (Twilio webhook) --------
 app.post("/voice", async (req, reply) => {
-  console.log("TWILIO POST BODY:", req.body);
+  console.log("Incoming Twilio Body:", req.body);
 
   const response = new twiml.VoiceResponse();
   response.say("Your Twilio POST webhook is now fully working!");
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n${response.toString()}`;
-  reply.type("text/xml").send(xml);
+  reply.type("text/xml").send(response.toString());
 });
 
-// --- 5. Start server ---
+// -------- 5. Start server --------
 const port = process.env.PORT || 3000;
 app.listen({ port, host: "0.0.0.0" }, () => {
-  console.log("Server running on port", port);
+  console.log("Server is running on port", port);
 });
 
-// --- 6. KEEP-ALIVE PING (every 4 minutes) ---
+// -------- 6. Keep Render Awake --------
 setInterval(() => {
   fetch("https://scammeebottwilio.onrender.com/")
     .then(() => console.log("Keep-alive ping sent"))
-    .catch(() => console.log("Keep-alive ping failed"));
+    .catch(() => console.log("Keep-alive failed"));
 }, 4 * 60 * 1000);
