@@ -1,5 +1,5 @@
 {
-  "name": "scammeebot-twilio",
+  "name": "scammeebottwilio",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
@@ -7,11 +7,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "fastify": "^4.25.0",
-    "@fastify/websocket": "^8.0.0",
-    "openai-realtime-api": "latest",
-    "twilio": "latest",
-    "axios": "latest"
+    "fastify": "^4.20.0",
+    "twilio": "^4.19.0"
   },
   "engines": {
     "node": "18.x"
