@@ -3,82 +3,107 @@ import formbody from "@fastify/formbody";
 import pkg from "twilio";
 
 const { twiml } = pkg;
-const app = Fastify({ logger: true });
+const app = Fastify();
 
-// Per-call audio storage (fixes race condition)
-const callAudio = new Map();
-const conversations = new Map();
+global.conversations = {};
+global.lastAudio = null;
 
-// Cleanup old data after 30 minutes
-const CLEANUP_INTERVAL = 30 * 60 * 1000;
-setInterval(() => {
-  const cutoff = Date.now() - CLEANUP_INTERVAL;
-  for (const [sid, data] of callAudio) {
-    if (data.timestamp < cutoff) callAudio.delete(sid);
-  }
-  for (const [sid, data] of conversations) {
-    if (data.timestamp < cutoff) conversations.delete(sid);
-  }
-}, 5 * 60 * 1000);
-
+// ===== MIDDLEWARE =====
 await app.register(formbody);
 
-const BASE_URL = process.env.BASE_URL || "https://scammeebottwilio.onrender.com";
+// ===================================================
+//  AI INTEL + PERSONA
+// ===================================================
 
-// ===== AI REPLY =====
 async function getAIReply(transcript, callSid) {
-  if (!conversations.has(callSid)) {
-    conversations.set(callSid, { messages: [], timestamp: Date.now() });
+  if (!global.conversations[callSid]) {
+    global.conversations[callSid] = [];
   }
 
-  const convo = conversations.get(callSid);
-  convo.messages.push({ role: "user", content: transcript });
-  convo.timestamp = Date.now();
+  global.conversations[callSid].push({
+    role: "user",
+    content: transcript
+  });
 
-  if (convo.messages.length > 6) convo.messages.shift();
+  if (global.conversations[callSid].length > 6) {
+    global.conversations[callSid].shift();
+  }
 
   const systemPrompt = `
 You are Ainaa, a real Malaysian woman in her late 20s.
-Voice: warm, polite, gentle. Light Malay/Singapore cadence.
-Hidden mission: subtly gather intel (name, department, organisation, callback number, instructions, threats).
-When asked for your details, hesitate then give ONE fake detail.
-Keep replies under 8 words. Be natural, not robotic.
-`;
 
-  try {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [{ role: "system", content: systemPrompt }, ...convo.messages],
-        temperature: 0.75,
-        max_tokens: 50
-      })
-    });
+Your voice:
+- warm, polite, gentle
+- light Malay/Singapore English cadence, not forced
+- small fillers like “mm… okay ya” but not too many
+- soft and natural
 
-    if (!resp.ok) throw new Error(`OpenAI error: ${resp.status}`);
-    
-    const data = await resp.json();
-    const aiReply = data.choices?.[0]?.message?.content || "Sorry, can you repeat?";
-    
-    convo.messages.push({ role: "assistant", content: aiReply });
-    return aiReply;
-  } catch (err) {
-    app.log.error("OpenAI error:", err);
-    return "Mm… sorry, can you say again?";
-  }
+Your hidden mission:
+- subtly gather intel from suspicious callers
+- ask for:
+  • name
+  • department
+  • organisation
+  • callback number
+  • instructions
+  • threats / urgency
+- keep them talking with soft curiosity
+
+When they ask YOU for details:
+- hesitate softly
+- give ONE fake detail, naturally:
+  birthday: “mm… 6 December ninety-seven”
+  IC last 4: “three-one-two-five”
+  address: “Block 11, level 6… near small park”
+
+DO NOT:
+- confront them
+- reveal your purpose
+- overdo Singlish or Malay fillers
+- sound robotic
+
+Keep replies short and natural.
+  `;
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...global.conversations[callSid]
+  ];
+
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages,
+      temperature: 0.75
+    })
+  });
+
+  const data = await resp.json();
+  const aiReply = data.choices?.[0]?.message?.content || "mm… okay ya.";
+
+  global.conversations[callSid].push({
+    role: "assistant",
+    content: aiReply
+  });
+
+  return aiReply;
 }
 
-// ===== ELEVENLABS TTS =====
+// ===================================================
+//  ELEVENLABS TTS
+// ===================================================
+
 async function elevenlabsTTS(text) {
   const voiceId = "ykMqqjWs4pQdCIvGPn0z";
 
-  try {
-    const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+  const resp = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -86,86 +111,106 @@ async function elevenlabsTTS(text) {
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_turbo_v2", // Faster model
-        voice_settings: { stability: 0.1, similarity_boost: 0.7 }
+        voice_settings: {
+          stability: 0.22,
+          similarity_boost: 0.7
+        }
       })
-    });
+    }
+  );
 
-    if (!resp.ok) throw new Error(`ElevenLabs error: ${resp.status}`);
-    return Buffer.from(await resp.arrayBuffer());
-  } catch (err) {
-    app.log.error("ElevenLabs error:", err);
-    return null;
-  }
+  return Buffer.from(await resp.arrayBuffer());
 }
 
-// ===== ROUTES =====
+// ===================================================
+// ROUTES
+// ===================================================
+
 app.get("/", async () => ({ ok: true }));
 
-// Per-call audio endpoint (fixes race condition)
-app.get("/reply/:callSid.mp3", async (req, reply) => {
-  const audio = callAudio.get(req.params.callSid);
-  
-  if (!audio?.buffer) {
-    // Return actual valid silent audio or 404
-    return reply.code(404).send("Not found");
-  }
-
-  reply.type("audio/mpeg").send(audio.buffer);
+app.get("/reply.mp3", async (req, reply) => {
+  reply.type("audio/mpeg").send(global.lastAudio);
 });
 
+// ===================================================
+// RECORDING CALLBACK
+// ===================================================
 app.post("/recording", async (req, reply) => {
-  app.log.info({ url: req.body.RecordingUrl, sid: req.body.CallSid }, "Recording received");
+  console.log("🎧 RECORDING URL:", req.body.RecordingUrl);
+  console.log("🔔 CALL SID:", req.body.CallSid);
   reply.send("OK");
 });
 
+// ===================================================
+// TRANSCRIPT CALLBACK
+// ===================================================
 app.post("/transcript", async (req, reply) => {
-  app.log.info({ text: req.body.TranscriptionText }, "Transcript received");
+  console.log("📝 TRANSCRIPT:", req.body.TranscriptionText);
+  console.log("🎤 AUDIO URL:", req.body.RecordingUrl);
   reply.send("OK");
 });
 
-// ===== MAIN VOICE HANDLER =====
+// ===================================================
+// MAIN LOOP
+// ===================================================
+
 app.post("/voice", async (req, reply) => {
   const transcript = req.body.SpeechResult || "";
   const callSid = req.body.CallSid;
 
-  app.log.info({ callSid, transcript }, "Voice input");
+  console.log("CALL SID:", callSid);
+  console.log("CALLER SAID:", transcript);
 
-  let aiReply = "Hello… ya? Err sorry, who is this calling?";
+  let aiReply = "Hello… ya? mm sorry, who is this calling?";
 
   if (transcript.trim().length > 0) {
-    aiReply = await getAIReply(transcript, callSid); // Fixed function name
+    aiReply = await getAIReply(transcript, callSid);
   }
+
+  console.log("AI REPLY:", aiReply);
 
   const audioBuffer = await elevenlabsTTS(aiReply);
+  global.lastAudio = audioBuffer;
+
+  const audioUrl = "https://scammeebottwilio.onrender.com/reply.mp3";
+
   const response = new twiml.VoiceResponse();
 
-  if (audioBuffer) {
-    callAudio.set(callSid, { buffer: audioBuffer, timestamp: Date.now() });
-    response.pause({ length: 0.5 });
-    response.play(`${BASE_URL}/reply/${callSid}.mp3`);
+  if (!audioBuffer) {
+    response.say("Sorry, audio still loading.");
   } else {
-    response.say({ voice: "Polly.Joanna" }, aiReply); // Fallback to Twilio TTS
+    response.play(audioUrl);
   }
+
+  // ===== ENABLE RECORDING + TRANSCRIPTION =====
+  response.record({
+    recordingStatusCallback: "/recording",
+    transcribe: true,
+    transcribeCallback: "/transcript"
+  });
 
   response.gather({
     input: "speech",
     action: "/voice",
     method: "POST",
     speechTimeout: "auto",
-    language: "en-MY" // Malaysian English
+    language: "en-US"
   });
 
   reply.type("text/xml").send(response.toString());
 });
 
-// ===== START =====
+// ===================================================
+// START SERVER
+// ===================================================
 const port = process.env.PORT || 3000;
 app.listen({ port, host: "0.0.0.0" }, () => {
-  app.log.info(`Server running on ${port}`);
+  console.log("Server running on", port);
 });
 
-// Keep-alive ping
+// ===================================================
+// KEEP RENDER ALIVE
+// ===================================================
 setInterval(() => {
-  fetch(`${BASE_URL}/`).catch(() => {});
+  fetch("https://scammeebottwilio.onrender.com/").catch(() => {});
 }, 4 * 60 * 1000);
