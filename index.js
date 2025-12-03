@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import formbody from "@fastify/formbody";
 import pkg from "twilio";
+import fetch from "node-fetch"; // required for Render Node 18
 
 const { twiml } = pkg;
 const app = Fastify();
@@ -32,32 +33,38 @@ async function getAIReply(transcript, callSid) {
   const systemPrompt = `
 You are Ainaa, a real Malaysian woman in her late 20s.
 
-Your voice:
+Voice:
 - warm, polite, gentle
-- light Malay/Singapore English cadence, not fake
-- small fillers like “mm… okay ya” but not too many
-- soft and natural
+- light Malay/Singapore cadence, not exaggerated
+- small fillers like “mm… okay ya” but very natural
 
-Your hidden mission:
+Hidden mission:
 - subtly gather intel from suspicious callers
-- ask for:
+- ask softly for:
   • name
   • department
   • organisation
   • callback number
-  • instructions
-  • threats / urgency
+  • instructions they want you to follow
+  • threats + urgency
+- keep them talking by being soft, warm, curious
 
-When they ask YOU for details:
-- hesitate softly
+When asked for your own details:
+- hesitate naturally
 - give ONE fake detail:
-  birthday: “mm… 6 December ninety-seven”
+  birthday: “umm… 6 December ninety-seven”
   IC last 4: “three-one-two-five”
-  address: “Block 11, level 6… near small park”
+  address: “Block 11, level 6… near the small park one”
 
-DO NOT confront or expose the purpose.
-Keep replies short and natural.
-  `;
+Do NOT:
+- expose your purpose
+- act robotic
+- confront them
+- overuse lah/leh/ah/aiyo
+- give long replies
+
+Replies must be short, natural, human. Keep replies under 8 words.
+`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -106,7 +113,7 @@ async function elevenlabsTTS(text) {
       body: JSON.stringify({
         text,
         voice_settings: {
-          stability: 0.22,
+          stability: 0.1,
           similarity_boost: 0.7
         }
       })
@@ -122,8 +129,18 @@ async function elevenlabsTTS(text) {
 
 app.get("/", async () => ({ ok: true }));
 
-// serve last generated MP3
+// ====== SAFE MP3 SERVE WITH SILENT FALLBACK ======
+
 app.get("/reply.mp3", async (req, reply) => {
+  if (!global.lastAudio) {
+    // 200ms silent mp3 fallback
+    const silent = Buffer.from([
+      0x49,0x44,0x33,0x03,0x00,0x00,0x00,0x00,0x00 // minimal header silence
+    ]);
+    reply.type("audio/mpeg").send(silent);
+    return;
+  }
+
   reply.type("audio/mpeg").send(global.lastAudio);
 });
 
@@ -156,14 +173,13 @@ app.post("/voice", async (req, reply) => {
   console.log("CALL SID:", callSid);
   console.log("CALLER SAID:", transcript);
 
-  let aiReply = "Hello… ya? mm sorry, who is this calling?";
+  let aiReply = "Hello… ya? Err sorry, who is this calling?";
 
   if (transcript.trim().length > 0) {
-    aiReply = await getAIReply(transcript, callSid);
+    aiReply = await mm(transcript, callSid);
   }
 
-  console.log("AI REPLY:", aiReply);
-
+  // generate audio
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
 
@@ -171,27 +187,23 @@ app.post("/voice", async (req, reply) => {
 
   const response = new twiml.VoiceResponse();
 
-  // ===================================================
-  //  START RECORDING ENTIRE CALL (WORKS FOR ALL NUMBERS)
-  // ===================================================
-  response.start().record({
-    recordingStatusCallback: "/recording",
-    transcribe: true,
-    transcriptionStatusCallback: "/transcript"
-  });
+  // ===== reduce latency + avoid Twilio fetch failure =====
+  response.pause({ length: 1 }); // gives Render time to serve MP3
 
-  // ===================================================
-  //  PLAY AINAA'S VOICE
-  // ===================================================
   if (!audioBuffer) {
-    response.say("Hello… sorry ya, the audio loading a bit slow.");
+    response.say("Mm… hold on ya.");
   } else {
     response.play(audioUrl);
   }
 
-  // ===================================================
-  // SPEECH LOOP
-  // ===================================================
+  // ===== ENABLE RECORDING + TRANSCRIPTION =====
+  response.record({
+    recordingStatusCallback: "/recording",
+    transcribe: true,
+    transcribeCallback: "/transcript"
+  });
+
+  // ===== SPEECH LOOP =====
   response.gather({
     input: "speech",
     action: "/voice",
