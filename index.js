@@ -47,21 +47,15 @@ Your hidden mission:
   • callback number
   • instructions
   • threats / urgency
-- keep them talking with soft curiosity
 
 When they ask YOU for details:
-- hesitate
-- give ONE fake detail, naturally:
+- hesitate softly
+- give ONE fake detail:
   birthday: “mm… 6 December ninety-seven”
   IC last 4: “three-one-two-five”
   address: “Block 11, level 6… near small park”
 
-DO NOT:
-- accuse them
-- confront them
-- expose your purpose
-- overuse lah/leh/aiyo
-
+DO NOT confront or expose the purpose.
 Keep replies short and natural.
   `;
 
@@ -128,7 +122,7 @@ async function elevenlabsTTS(text) {
 
 app.get("/", async () => ({ ok: true }));
 
-// serve generated MP3
+// serve last generated MP3
 app.get("/reply.mp3", async (req, reply) => {
   reply.type("audio/mpeg").send(global.lastAudio);
 });
@@ -170,7 +164,6 @@ app.post("/voice", async (req, reply) => {
 
   console.log("AI REPLY:", aiReply);
 
-  // generate audio
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
 
@@ -178,21 +171,27 @@ app.post("/voice", async (req, reply) => {
 
   const response = new twiml.VoiceResponse();
 
-  // Play Ainaa’s voice
+  // ===================================================
+  //  START RECORDING ENTIRE CALL (WORKS FOR ALL NUMBERS)
+  // ===================================================
+  response.start().record({
+    recordingStatusCallback: "/recording",
+    transcribe: true,
+    transcriptionStatusCallback: "/transcript"
+  });
+
+  // ===================================================
+  //  PLAY AINAA'S VOICE
+  // ===================================================
   if (!audioBuffer) {
     response.say("Hello… sorry ya, the audio loading a bit slow.");
   } else {
     response.play(audioUrl);
   }
 
-  // ===== ENABLE RECORDING + TRANSCRIPTION =====
-  response.record({
-    recordingStatusCallback: "/recording",
-    transcribe: true,
-    transcribeCallback: "/transcript"
-  });
-
-  // Speech loop
+  // ===================================================
+  // SPEECH LOOP
+  // ===================================================
   response.gather({
     input: "speech",
     action: "/voice",
