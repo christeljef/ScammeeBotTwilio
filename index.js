@@ -1,7 +1,6 @@
 import Fastify from "fastify";
 import formbody from "@fastify/formbody";
 import pkg from "twilio";
-import fetch from "node-fetch";
 
 const { twiml } = pkg;
 const app = Fastify({ logger: true });
