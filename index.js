@@ -5,15 +5,16 @@ import pkg from "twilio";
 const { twiml } = pkg;
 const app = Fastify();
 
+// GLOBAL MEMORY
 global.conversations = {};
 global.lastAudio = null;
-global.recordingStarted = {}; // Track if recording has begun per call
+global.recordingStarted = {}; // Track one-time recording
 
 // ===== MIDDLEWARE =====
 await app.register(formbody);
 
 // ===================================================
-//  AI INTEL + PERSONA
+//  AI INTEL + PERSONA LOGIC
 // ===================================================
 
 async function getAIReply(transcript, callSid) {
@@ -31,38 +32,32 @@ async function getAIReply(transcript, callSid) {
   }
 
   const systemPrompt = `
-You are Ainaa, a real Malaysian woman in her late 20s.
+You are Ainaa, a soft-spoken Malaysian woman in your late 20s.
 
 Your voice:
-- warm, polite, gentle
-- light Malay/Singapore English cadence, but subtle
+- warm, gentle, natural
+- light Malay/Singapore English cadence but subtle
 - soft fillers like “mm… okay ya” (not too many)
-- natural, human, never robotic
 
 Your hidden mission:
 - subtly gather intel from suspicious callers
 - ask softly for:
-  • name
-  • department
-  • organisation
-  • callback number
-  • instructions
-  • urgency / threats
+  * name
+  * department / organisation
+  * callback number
+  * instructions
+  * urgency / threats
 
-When they ask YOU for personal info:
-- hesitate naturally
+When they ask YOU for info:
+- hesitate gently
 - give ONE fake detail:
   birthday: “mm… 6 December ninety-seven”
-  IC last 4: “three-one-two-five”
+  IC: “three-one-two-five”
   address: “Block 11, level 6… near the small park”
 
-NEVER:
-- accuse them
-- sound fake
-- repeat yourself
-- overuse lah/leh/aiyo
-
-All replies short and soft.`;
+Never confront. Never accuse. Never sound robotic.
+Keep replies 1–2 short sentences.
+`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -78,7 +73,7 @@ All replies short and soft.`;
     body: JSON.stringify({
       model: "gpt-4o-mini",
       messages,
-      temperature: 0.75
+      temperature: 0.7
     })
   });
 
@@ -111,7 +106,7 @@ async function elevenlabsTTS(text) {
       body: JSON.stringify({
         text,
         voice_settings: {
-          stability: 0.22,
+          stability: 0.25,
           similarity_boost: 0.7
         }
       })
@@ -127,22 +122,19 @@ async function elevenlabsTTS(text) {
 
 app.get("/", async () => ({ ok: true }));
 
+// Serve generated MP3
 app.get("/reply.mp3", async (req, reply) => {
   reply.type("audio/mpeg").send(global.lastAudio);
 });
 
-// ===================================================
 // RECORDING CALLBACK
-// ===================================================
 app.post("/recording", async (req, reply) => {
   console.log("🎧 RECORDING URL:", req.body.RecordingUrl);
   console.log("🔔 CALL SID:", req.body.CallSid);
   reply.send("OK");
 });
 
-// ===================================================
 // TRANSCRIPTION CALLBACK
-// ===================================================
 app.post("/transcript", async (req, reply) => {
   console.log("📝 TRANSCRIPT:", req.body.TranscriptionText);
   console.log("🎤 AUDIO URL:", req.body.RecordingUrl);
@@ -150,47 +142,57 @@ app.post("/transcript", async (req, reply) => {
 });
 
 // ===================================================
-// MAIN CALL HANDLER
+//  MAIN CALL FLOW
 // ===================================================
 
 app.post("/voice", async (req, reply) => {
   const callSid = req.body.CallSid;
   const transcript = req.body.SpeechResult || "";
-
   const response = new twiml.VoiceResponse();
 
   // ===================================================
-  // FIRST TIME ONLY: START RECORDING ONCE
+  // FIRST TURN — generate audio BEFORE gather
   // ===================================================
   if (!global.recordingStarted[callSid]) {
     global.recordingStarted[callSid] = true;
 
+    const firstReply = "Hello… ya? mm sorry, who is this calling?";
+
+    // Generate audio immediately
+    const audioBuffer = await elevenlabsTTS(firstReply);
+    global.lastAudio = audioBuffer;
+    const audioUrl = "https://scammeebottwilio.onrender.com/reply.mp3";
+
+    // Start recording ONCE
     response.record({
       recordingStatusCallback: "/recording",
       transcribe: true,
       transcribeCallback: "/transcript"
     });
 
-    // After starting recording, prompt caller
-    const greet = response.gather({
+    // Speak first line
+    response.play(audioUrl);
+
+    // Then gather
+    response.gather({
       input: "speech",
       action: "/voice",
       speechTimeout: "auto",
-      method: "POST"
+      method: "POST",
+      language: "en-US"
     });
 
-    greet.say("Hello… ya? mm sorry, who is this calling?");
     return reply.type("text/xml").send(response.toString());
   }
 
   // ===================================================
-  // NORMAL LOOP (AFTER FIRST TURN)
+  // NORMAL LOOP
   // ===================================================
 
   console.log("CALL SID:", callSid);
   console.log("CALLER SAID:", transcript);
 
-  let aiReply = "mm… okay ya, can you repeat again?";
+  let aiReply = "mm… okay ya, can repeat again?";
 
   if (transcript.trim().length > 0) {
     aiReply = await getAIReply(transcript, callSid);
@@ -198,23 +200,23 @@ app.post("/voice", async (req, reply) => {
 
   console.log("AI REPLY:", aiReply);
 
+  // Generate voice
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
   const audioUrl = "https://scammeebottwilio.onrender.com/reply.mp3";
 
-  // Play Ainaa’s voice
   if (audioBuffer) {
     response.play(audioUrl);
   } else {
     response.say("mm… the line a bit slow ya…");
   }
 
-  // Gather next caller input
+  // Continue speech loop
   response.gather({
     input: "speech",
     action: "/voice",
-    speechTimeout: "auto",
     method: "POST",
+    speechTimeout: "auto",
     language: "en-US"
   });
 
@@ -224,6 +226,7 @@ app.post("/voice", async (req, reply) => {
 // ===================================================
 // START SERVER
 // ===================================================
+
 const port = process.env.PORT || 3000;
 app.listen({ port, host: "0.0.0.0" }, () => {
   console.log("Server running on", port);
@@ -232,6 +235,7 @@ app.listen({ port, host: "0.0.0.0" }, () => {
 // ===================================================
 // KEEP RENDER ALIVE
 // ===================================================
+
 setInterval(() => {
   fetch("https://scammeebottwilio.onrender.com/").catch(() => {});
 }, 4 * 60 * 1000);
