@@ -2,6 +2,9 @@ import Fastify from "fastify";
 import formbody from "@fastify/formbody";
 import pkg from "twilio";
 
+// Node 18+ has global fetch, but ensure compatibility:
+const fetchApi = globalThis.fetch;
+
 const { twiml } = pkg;
 const app = Fastify();
 
@@ -45,7 +48,7 @@ Your job:
     ...global.conversations[callSid]
   ];
 
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+  const resp = await fetchApi("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -59,7 +62,9 @@ Your job:
   });
 
   const data = await resp.json();
-  const aiReply = data.choices?.[0]?.message?.content || "Sorry ya, can repeat that?";
+  const aiReply =
+    data?.choices?.[0]?.message?.content ||
+    "Sorry ya, can repeat that?";
 
   global.conversations[callSid].push({
     role: "assistant",
@@ -76,7 +81,7 @@ Your job:
 async function elevenlabsTTS(text) {
   const voiceId = "ykMqqjWs4pQdCIvGPn0z";
 
-  const resp = await fetch(
+  const resp = await fetchApi(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
     {
       method: "POST",
@@ -140,7 +145,6 @@ app.post("/voice", async (req, reply) => {
 
   console.log("AI:", aiReply);
 
-  // Generate audio
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
 
@@ -187,5 +191,5 @@ app.listen({ port, host: "0.0.0.0" }, () => {
 // ===================================================
 
 setInterval(() => {
-  fetch("https://scammeebottwilio.onrender.com/").catch(() => {});
+  fetchApi("https://scammeebottwilio.onrender.com/").catch(() => {});
 }, 4 * 60 * 1000);
