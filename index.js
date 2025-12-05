@@ -7,6 +7,7 @@ const app = Fastify();
 
 global.conversations = {};
 global.lastAudio = null;
+global.recordingStarted = {}; // Track if recording has begun per call
 
 // ===== MIDDLEWARE =====
 await app.register(formbody);
@@ -34,36 +35,34 @@ You are Ainaa, a real Malaysian woman in her late 20s.
 
 Your voice:
 - warm, polite, gentle
-- light Malay/Singapore English cadence, not forced
-- small fillers like “mm… okay ya” but not too many
-- soft and natural
+- light Malay/Singapore English cadence, but subtle
+- soft fillers like “mm… okay ya” (not too many)
+- natural, human, never robotic
 
 Your hidden mission:
 - subtly gather intel from suspicious callers
-- ask for:
+- ask softly for:
   • name
   • department
   • organisation
   • callback number
   • instructions
-  • threats / urgency
-- keep them talking with soft curiosity
+  • urgency / threats
 
-When they ask YOU for details:
-- hesitate softly
-- give ONE fake detail, naturally:
+When they ask YOU for personal info:
+- hesitate naturally
+- give ONE fake detail:
   birthday: “mm… 6 December ninety-seven”
   IC last 4: “three-one-two-five”
-  address: “Block 11, level 6… near small park”
+  address: “Block 11, level 6… near the small park”
 
-DO NOT:
-- confront them
-- reveal your purpose
-- overdo Singlish or Malay fillers
-- sound robotic
+NEVER:
+- accuse them
+- sound fake
+- repeat yourself
+- overuse lah/leh/aiyo
 
-Keep replies short and natural.
-  `;
+All replies short and soft.`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -84,7 +83,7 @@ Keep replies short and natural.
   });
 
   const data = await resp.json();
-  const aiReply = data.choices?.[0]?.message?.content || "mm… okay ya.";
+  const aiReply = data?.choices?.[0]?.message?.content || "mm… okay ya.";
 
   global.conversations[callSid].push({
     role: "assistant",
@@ -142,7 +141,7 @@ app.post("/recording", async (req, reply) => {
 });
 
 // ===================================================
-// TRANSCRIPT CALLBACK
+// TRANSCRIPTION CALLBACK
 // ===================================================
 app.post("/transcript", async (req, reply) => {
   console.log("📝 TRANSCRIPT:", req.body.TranscriptionText);
@@ -151,17 +150,47 @@ app.post("/transcript", async (req, reply) => {
 });
 
 // ===================================================
-// MAIN LOOP
+// MAIN CALL HANDLER
 // ===================================================
 
 app.post("/voice", async (req, reply) => {
-  const transcript = req.body.SpeechResult || "";
   const callSid = req.body.CallSid;
+  const transcript = req.body.SpeechResult || "";
+
+  const response = new twiml.VoiceResponse();
+
+  // ===================================================
+  // FIRST TIME ONLY: START RECORDING ONCE
+  // ===================================================
+  if (!global.recordingStarted[callSid]) {
+    global.recordingStarted[callSid] = true;
+
+    response.record({
+      recordingStatusCallback: "/recording",
+      transcribe: true,
+      transcribeCallback: "/transcript"
+    });
+
+    // After starting recording, prompt caller
+    const greet = response.gather({
+      input: "speech",
+      action: "/voice",
+      speechTimeout: "auto",
+      method: "POST"
+    });
+
+    greet.say("Hello… ya? mm sorry, who is this calling?");
+    return reply.type("text/xml").send(response.toString());
+  }
+
+  // ===================================================
+  // NORMAL LOOP (AFTER FIRST TURN)
+  // ===================================================
 
   console.log("CALL SID:", callSid);
   console.log("CALLER SAID:", transcript);
 
-  let aiReply = "Hello… ya? mm sorry, who is this calling?";
+  let aiReply = "mm… okay ya, can you repeat again?";
 
   if (transcript.trim().length > 0) {
     aiReply = await getAIReply(transcript, callSid);
@@ -171,29 +200,21 @@ app.post("/voice", async (req, reply) => {
 
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
-
   const audioUrl = "https://scammeebottwilio.onrender.com/reply.mp3";
 
-  const response = new twiml.VoiceResponse();
-
-  if (!audioBuffer) {
-    response.say("Sorry, audio still loading.");
-  } else {
+  // Play Ainaa’s voice
+  if (audioBuffer) {
     response.play(audioUrl);
+  } else {
+    response.say("mm… the line a bit slow ya…");
   }
 
-  // ===== ENABLE RECORDING + TRANSCRIPTION =====
-  response.record({
-    recordingStatusCallback: "/recording",
-    transcribe: true,
-    transcribeCallback: "/transcript"
-  });
-
+  // Gather next caller input
   response.gather({
     input: "speech",
     action: "/voice",
-    method: "POST",
     speechTimeout: "auto",
+    method: "POST",
     language: "en-US"
   });
 
