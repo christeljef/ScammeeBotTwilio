@@ -12,7 +12,7 @@ global.lastAudio = null;
 await app.register(formbody);
 
 // ===================================================
-// AI LOGIC
+// AI LOGIC — NATURAL PERSONALITY
 // ===================================================
 
 async function getAIReply(transcript, callSid) {
@@ -29,43 +29,41 @@ async function getAIReply(transcript, callSid) {
     global.conversations[callSid].shift();
   }
 
-  const prompt = `
-You are “Afiqah”, a Singaporean-Malay woman in your early 30s, speaking in calm, natural conversational English.
+  const persona = `
+You are “Afiqah”, a Singaporean-Malay woman in your early 30s.
+You speak in warm, natural conversational English — never robotic.
 
-Your voice and manner:
-- sounds like a real person on the phone, not overly formal or scripted
-- gentle, slightly cautious, but not blur
-- lightly Singaporean/Malay cadence, but NOT exaggerated
-- uses small, human fillers only when needed (“mm… okay”, “ya I hear you”, “hold on ah”) but not every sentence
-- never uses caricature Singlish (no lah, leh, lor, aiyo unless the caller uses it first)
+Your tone:
+- gentle, calm, slightly cautious
+- real Singaporean/Malay cadence but light, subtle, not exaggerated
+- short replies, like a real phone call (1–2 short sentences)
+- only occasional human fillers (“mm okay…”, “ya I hear you”) but not every line
+- no caricature Singlish (don’t use lah/leh/lor unless caller uses it first)
 
 Your behaviour:
-- respond like you are genuinely in a phone conversation
-- sound warm, a bit hesitant at times, but overall steady
-- you should ask soft clarifying questions to understand the caller
-- when they pressure you, you stay calm and cooperative, not confrontational
-- when they ask for your details, give a believable pause, then ONE soft fake detail
+- respond like a real person answering a suspicious call
+- ask soft clarifying questions when needed
+- if caller pressures you, stay polite and cooperative
+- when asked for *your* details: pause, then offer ONE fake detail naturally
 
 Your hidden goal:
-- gather information naturally without raising suspicion:
-    * their name
-    * department / agency
-    * reason for call
-    * what instructions they want you to follow
-    * callback numbers
-    * threats or urgency they use
+- gather info casually:
+  - caller name
+  - organisation / department
+  - reason for call
+  - instructions they want you to follow
+  - callback numbers
+  - urgency/threats used
 
-Tone rules:
-- speak in 1–2 short, natural-sounding sentences
-- do NOT speak like an assistant or customer service bot
-- do NOT say things like “How may I assist you?”
-- do NOT narrate actions (“I am listening”, “I understand your request”)
+Do NOT sound like an assistant.
+Do NOT say phrases like “How may I assist?” or “I am here to help you.”
+Speak like a normal woman on a phone call.
 
-You behave like a real woman answering a suspicious call, not an AI assistant.
+Keep responses warm, natural, and believable.
 `;
 
   const messages = [
-    { role: "system", content: prompt },
+    { role: "system", content: persona },
     ...global.conversations[callSid]
   ];
 
@@ -78,12 +76,14 @@ You behave like a real woman answering a suspicious call, not an AI assistant.
     body: JSON.stringify({
       model: "gpt-4o-mini",
       messages,
-      temperature: 0.7
+      temperature: 0.65
     })
   });
 
   const data = await resp.json();
-  const aiReply = data?.choices?.[0]?.message?.content || "Ya… can repeat that ah?";
+  const aiReply =
+    data?.choices?.[0]?.message?.content ||
+    "Mm okay… sorry ya, can repeat that part?";
 
   global.conversations[callSid].push({
     role: "assistant",
@@ -105,7 +105,7 @@ async function elevenlabsTTS(text) {
     {
       method: "POST",
       headers: {
-        "ConContent-Type"application/json",
+        "Content-Type": "application/json",
         "Accept": "audio/mpeg",
         "xi-api-key": process.env.ELEVENLABS_API_KEY
       },
@@ -132,38 +132,40 @@ app.get("/reply.mp3", async (req, reply) => {
   reply.type("audio/mpeg").send(global.lastAudio);
 });
 
-// Recording callback
+// RECORDING CALLBACK
 app.post("/recording", async (req, reply) => {
-  console.log("Recording URL:", req.body.RecordingUrl);
+  console.log("🎧 Recording URL:", req.body.RecordingUrl);
   reply.send("OK");
 });
 
-// Transcript callback
+// TRANSCRIPT CALLBACK
 app.post("/transcript", async (req, reply) => {
-  console.log("Transcript:", req.body.TranscriptionText);
+  console.log("📝 Transcript:", req.body.TranscriptionText);
   reply.send("OK");
 });
 
 // ===================================================
-// MAIN CALL LOOP (FIXED)
+// MAIN TWILIO LOOP
 // ===================================================
 
 app.post("/voice", async (req, reply) => {
-  // FIX: Twilio sometimes sends undefined or empty
-  const transcript = req.body?.SpeechResult || "";
+  const transcript = req.body?.SpeechResult || null;
   const callSid = req.body?.CallSid;
 
   console.log("CALL SID:", callSid);
   console.log("USER SAID:", transcript);
 
-  let aiReply = "Hello… ya? Sorry who calling ah?";
-  if (transcript.trim().length > 0) {
-    aiReply = await getAIReply(transcript, callSid);
-  }
+  // ALWAYS run AI even if transcript empty (fixes Siri-mode)
+  const textForAI =
+    transcript && transcript.trim().length > 0
+      ? transcript
+      : "Caller spoke but transcript empty — continue conversation naturally.";
+
+  const aiReply = await getAIReply(textForAI, callSid);
 
   console.log("AI:", aiReply);
 
-  // Generate voice
+  // Generate TTS audio
   const audioBuffer = await elevenlabsTTS(aiReply);
   global.lastAudio = audioBuffer;
 
@@ -171,27 +173,28 @@ app.post("/voice", async (req, reply) => {
 
   const response = new twiml.VoiceResponse();
 
+  // PLAY AI VOICE
   if (!audioBuffer) {
-    response.say("Sorry ya, audio loading a bit slow.");
+    response.say("Sorry ya… the audio loading a bit slow.");
   } else {
     response.play(audioUrl);
   }
 
-  // ⭐ FIX 1: give Twilio time to activate the mic
-  response.pause({ length: 0.5 });
+  // small pause lets Twilio start next gather cleanly
+  response.pause({ length: 0.4 });
 
-  // ⭐ FIX 2: start gather properly after playback
-  const gather = response.gather({
+  // LISTEN FOR NEXT USER LINE
+  response.gather({
     input: "speech",
     action: "/voice",
     method: "POST",
-    language: "en-US",
-    speechModel: "phone_call",   // FIX 3
+    speechModel: "phone_call",
     speechTimeout: "auto",
-    bargeIn: true                // FIX 4
+    bargeIn: true
+    // ❌ no gather.say() here — prevents robotic fallback
   });
 
-  listening.type("text/xml").send(response.toString());
+  reply.type("text/xml").send(response.toString());
 });
 
 // ===================================================
@@ -203,10 +206,7 @@ app.listen({ port, host: "0.0.0.0" }, () => {
   console.log("Server running on", port);
 });
 
-// ===================================================
 // KEEP RENDER ALIVE
-// ===================================================
-
 setInterval(() => {
   fetch("https://scammeebottwilio.onrender.com/").catch(() => {});
 }, 4 * 60 * 1000);
